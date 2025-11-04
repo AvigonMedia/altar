@@ -4,9 +4,37 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// przyjmujemy tekst, żeby mieć kontrolę nad logami
+// przyjmujemy tekst, żeby mieć pełną kontrolę
 app.use(express.text({ type: "*/*" }));
 
+// Funkcja wysyłająca zapytanie do ACC z retry logic
+async function sendToAccWithRetry(url, options, retries = 0) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // ⏱️ 60 sekund timeout
+
+    const response = await fetch(url, { ...options, signal: controller.signal });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      throw new Error(`ACC returned error: ${response.statusText}`);
+    }
+
+    return await response.text(); // Odpowiedź z ACC
+  } catch (err) {
+    if (retries < 3) {
+      console.warn(`⏳ Próba ${retries + 1} nie powiodła się, ponawiamy...`);
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(sendToAccWithRetry(url, options, retries + 1)), 10000) // Retry co 10s
+      );
+    } else {
+      throw new Error(`⏱️ Próby nie powiodły się po ${3} próbach: ${err.message}`);
+    }
+  }
+}
+
+// Endpoint do odbierania leadów z MAKE
 app.post("/altar", async (req, res) => {
   console.log("🟢 Otrzymano zapytanie z MAKE!");
   console.log("RAW BODY:", req.body);
@@ -34,41 +62,26 @@ app.post("/altar", async (req, res) => {
   console.log("📤 Wysyłanie danych do ACC...");
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000); // ⏱️ 8 sekund timeout
-
-    const response = await fetch(altarUrl, {
+    const responseText = await sendToAccWithRetry(altarUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(jsonBody),
-      signal: controller.signal,
     });
 
-    clearTimeout(timeout);
-
-    const text = await response.text();
-    console.log("📩 Odpowiedź ACC:", text);
-
-    res.status(response.status).send(text || "OK");
+    console.log("📩 Odpowiedź ACC:", responseText);
+    res.status(200).send(responseText);
   } catch (err) {
-    if (err.name === "AbortError") {
-      console.error("⏱️ Timeout: ACC nie odpowiedział w 8 sekund.");
-      res
-        .status(504)
-        .json({ error: "ACC timeout", message: "Brak odpowiedzi w 8s" });
-    } else {
-      console.error("❌ Błąd połączenia z ACC:", err.message);
-      res
-        .status(500)
-        .json({ error: "ACC request failed", details: err.message });
-    }
+    console.error("❌ Błąd połączenia z ACC:", err.message);
+    res.status(504).json({ error: "ACC timeout", details: err.message });
   }
 });
 
+// Endpoint testowy
 app.get("/", (req, res) => {
   res.send("✅ Altar Proxy działa (POST /altar do wysyłki leadów).");
 });
 
+// Uruchomienie serwera
 app.listen(PORT, () =>
   console.log(`🚀 Proxy działa na porcie ${PORT}, gotowe na Make.`)
 );
