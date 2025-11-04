@@ -4,33 +4,35 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Przyjmujemy tekst, aby mieć pełną kontrolę
+// przyjmujemy tekst, żeby mieć pełną kontrolę nad logami
 app.use(express.text({ type: "*/*" }));
 
-// Testowy endpoint do sprawdzenia połączenia Render → ACC
-app.get("/test", async (req, res) => {
-  const altarUrl =
-    "https://aicc-freedom.altar.com.pl/accinterface/extsrvrest/outbound/loadrecord";
-
+// Funkcja wysyłająca zapytanie do ACC z retry logic
+async function sendToAccWithRetry(url, options, retries = 0) {
   try {
-    const response = await fetch(altarUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": "Basic " + Buffer.from("admin:altar123").toString("base64"),
-      },
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // ⏱️ 60 sekund timeout
+
+    const response = await fetch(url, { ...options, signal: controller.signal });
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       throw new Error(`ACC returned error: ${response.statusText}`);
     }
 
-    const data = await response.text();
-    res.status(200).send(data); // Zwraca odpowiedź z ACC
+    return await response.text(); // Odpowiedź z ACC
   } catch (err) {
-    console.error("Błąd podczas testowania połączenia z ACC:", err.message);
-    res.status(500).send({ error: "ACC połączenie nie działa", details: err.message });
+    if (retries < 5) {  // Zwiększamy retry do 5 prób
+      console.warn(`⏳ Próba ${retries + 1} nie powiodła się, ponawiamy...`);
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(sendToAccWithRetry(url, options, retries + 1)), 10000) // Retry co 10s
+      );
+    } else {
+      throw new Error(`⏱️ Próby nie powiodły się po ${5} próbach: ${err.message}`);
+    }
   }
-});
+}
 
 // Endpoint do odbierania leadów z MAKE
 app.post("/altar", async (req, res) => {
@@ -60,19 +62,17 @@ app.post("/altar", async (req, res) => {
   console.log("📤 Wysyłanie danych do ACC...");
 
   try {
-    const response = await fetch(altarUrl, {
+    const responseText = await sendToAccWithRetry(altarUrl, {
       method: "POST",
       headers,
       body: JSON.stringify(jsonBody),
     });
 
-    const text = await response.text();
-    console.log("📩 Odpowiedź ACC:", text);
-
-    res.status(response.status).send(text || "OK");
+    console.log("📩 Odpowiedź ACC:", responseText);
+    res.status(200).send(responseText);
   } catch (err) {
     console.error("❌ Błąd połączenia z ACC:", err.message);
-    res.status(500).json({ error: "ACC request failed", details: err.message });
+    res.status(504).json({ error: "ACC timeout", details: err.message });
   }
 });
 
