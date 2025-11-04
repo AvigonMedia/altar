@@ -1,14 +1,13 @@
 {
   "name": "altar-proxy",
-  "version": "1.1.0",
-  "description": "Proxy API do połączenia Make z ACC Altar z logowaniem błędów",
-  "main": "altar-proxy.js",
+  "version": "1.0.0",
   "type": "module",
-  "dependencies": {
-    "express": "^4.18.2",
-    "node-fetch": "^3.3.2"
-  },
+  "main": "altar-proxy.js",
   "scripts": {
     "start": "node altar-proxy.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
   }
 }
