@@ -1,73 +1,68 @@
 import express from "express";
 import fetch from "node-fetch";
-import fs from "fs";
 
 const app = express();
+const PORT = process.env.PORT || 8080;
 
-// 📦 Middleware do parsowania JSON
-app.use(express.json({ limit: "1mb", type: "application/json" }));
+// ✅ Tymczasowo odbieramy surowe dane jako tekst (żeby zobaczyć co przychodzi z MAKE)
+app.use(express.text({ type: "*/*" }));
 
-// 🔧 Pomocnicza funkcja do logowania (na konsolę i do pliku)
-function logToFile(message) {
-  const timestamp = new Date().toISOString();
-  const logLine = `[${timestamp}] ${message}\n`;
-  console.log(logLine);
-  fs.appendFileSync("logs.txt", logLine);
-}
-
-// 🧠 Główny endpoint do przyjmowania leadów z MAKE
+// 🔹 Endpoint do odbierania leadów z Make
 app.post("/altar", async (req, res) => {
-  const requestId = Math.random().toString(36).substring(2, 8).toUpperCase();
-  logToFile(`🟢 [${requestId}] Otrzymano zapytanie z MAKE: ${JSON.stringify(req.body)}`);
+  console.log("🟢 Otrzymano zapytanie z MAKE!");
+  console.log("RAW BODY:", req.body);
+
+  // Próba sparsowania JSON
+  let jsonBody;
+  try {
+    jsonBody = JSON.parse(req.body);
+    console.log("✅ Sparsowany JSON:", jsonBody);
+  } catch (err) {
+    console.error("⚠️ Błąd parsowania JSON:", err.message);
+    return res.status(400).json({
+      error: "Invalid JSON format w request body",
+      details: err.message,
+    });
+  }
+
+  // 🔹 Przygotowanie danych do ACC
+  const altarUrl =
+    "https://aicc-freedom.altar.com.pl/accinterface/extsrvrest/outbound/loadrecord";
+
+  const payload = JSON.stringify(jsonBody);
+
+  // 🔹 Przygotowanie nagłówków z autoryzacją Basic
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: "Basic " + Buffer.from("admin:altar123").toString("base64"),
+  };
 
   try {
-    // Walidacja podstawowa (czy przyszły wymagane pola)
-    if (!req.body || !req.body.params || !Array.isArray(req.body.params)) {
-      logToFile(`🔴 [${requestId}] Błąd walidacji — brak params`);
-      return res.status(400).json({ error: "Brak params w body" });
-    }
+    console.log("📤 Wysyłanie danych do ACC...");
+    const response = await fetch(altarUrl, {
+      method: "POST",
+      headers,
+      body: payload,
+    });
 
-    // Przekazanie do ACC
-    const response = await fetch(
-      "https://aicc-freedom.altar.com.pl/accinterface/extsrvrest/outbound/loadrecord",
-      {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json; charset=utf-8",
-          "Authorization": "Basic " + Buffer.from("admin:altar123").toString("base64"),
-        },
-        body: JSON.stringify(req.body),
-      }
-    );
+    const text = await response.text();
+    console.log("📩 Odpowiedź ACC:", text);
 
-    const rawText = await response.text();
-    const logPrefix = `[${requestId}] [ACC ${response.status}]`;
-
-    if (!response.ok) {
-      logToFile(`🟠 ${logPrefix} Błąd odpowiedzi z ACC: ${rawText}`);
-      return res.status(response.status).send({
-        error: "Błąd po stronie ACC",
-        status: response.status,
-        response: rawText,
-      });
-    }
-
-    logToFile(`✅ ${logPrefix} Sukces: ${rawText}`);
-    return res.status(200).send(rawText || { status: "OK" });
+    res
+      .status(response.status)
+      .send(text || { status: response.status, message: "Brak treści" });
   } catch (err) {
-    logToFile(`❌ [${requestId}] Wyjątek: ${err.message}`);
-    return res.status(500).json({ error: err.message });
+    console.error("❌ Błąd połączenia z ACC:", err.message);
+    res.status(500).json({ error: "ACC request failed", details: err.message });
   }
 });
 
-// 🌐 Endpoint testowy (GET /)
+// 🔹 Testowy endpoint GET — żeby sprawdzić, czy Render działa
 app.get("/", (req, res) => {
-  res.send("✅ Altar Proxy działa! Wyślij POST /altar żeby przetestować połączenie z ACC.");
+  res.send("✅ Altar Proxy działa. Użyj POST /altar żeby przesłać lead.");
 });
 
-// 🖥️ Nasłuchiwanie portu Render
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
-  logToFile(`🚀 Altar Proxy uruchomiony na porcie ${PORT}`);
-});
+// Start serwera
+app.listen(PORT, () =>
+  console.log(`🚀 Altar Proxy działa na porcie ${PORT}`)
+);
