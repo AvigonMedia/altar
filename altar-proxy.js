@@ -35,7 +35,7 @@ app.post("/altar", async (req, res) => {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000); // ⏱️ 8 sekund timeout
+    const timeout = setTimeout(() => controller.abort(), 30000); // ⏱️ 8 sekund timeout
 
     const response = await fetch(altarUrl, {
       method: "POST",
